@@ -1,0 +1,220 @@
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index 9c5029c..615e08d 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -14,7 +14,7 @@
+ #include <linux/vmalloc.h>
+ #include <linux/uaccess.h>
+ #include <linux/sched/stat.h>
+-
++#include <stdatomic.h>
+ #include <asm/processor.h>
+ #include <asm/user.h>
+ #include <asm/fpu/xstate.h>
+@@ -23,7 +23,11 @@
+ #include "mmu.h"
+ #include "trace.h"
+ #include "pmu.h"
++u32 exit_count=0;
++EXPORT_SYMBOL(exit_count);
+ 
++ atomic64_t total_exit_time;
++EXPORT_SYMBOL(total_exit_time);
+ static u32 xstate_required_size(u64 xstate_bv, bool compacted)
+ {
+ 	int feature_bit = 0;
+@@ -1045,12 +1049,42 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
+ 		return 1;
+ 
+ 	eax = kvm_rax_read(vcpu);
+-	ecx = kvm_rcx_read(vcpu);
+-	kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);
+-	kvm_rax_write(vcpu, eax);
++	//ecx = kvm_rcx_read(vcpu);
++	
++        if(eax==0x4FFFFFFF){
++        eax = exit_count;
++        printk(KERN_INFO "no of total exits:%u",exit_count);
++        kvm_rax_write(vcpu, eax);
++        kvm_rbx_write(vcpu, ebx);
++        kvm_rcx_write(vcpu, ecx);
++        kvm_rdx_write(vcpu, edx);
++
++         }else if(eax==0x4FFFFFFE){
++         
++         eax=0x00; 
++       		//ebx =(u32)((atomic_read(&total_exit_time) & 0xFFFFFFFF00000000LL)>>32);
++        	// ecx =(u32) (atomic_read(&total_exit_time) & 0xFFFFFFFFLL);
++    
++    	 u64 val=(atomic64_read(&total_exit_time) >>32);
++     	 ebx=val & 0xffffffff;
++         ecx=atomic64_read(&total_exit_time) & 0xffffffff;
++         edx=0x00;		      
++         printk(KERN_INFO "total cycles: %llu",atomic64_read(&total_exit_time));
++         kvm_rax_write(vcpu, eax);
++         kvm_rbx_write(vcpu, ebx);
++         kvm_rcx_write(vcpu, ecx);
++         kvm_rdx_write(vcpu, edx);
++
++          }else{
++       
++ 	eax = kvm_rax_read(vcpu);
++        ecx = kvm_rcx_read(vcpu);
++        kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);     
++        kvm_rax_write(vcpu, eax);
+ 	kvm_rbx_write(vcpu, ebx);
+ 	kvm_rcx_write(vcpu, ecx);
+ 	kvm_rdx_write(vcpu, edx);
++         }
+ 	return kvm_skip_emulated_instruction(vcpu);
+ }
+ EXPORT_SYMBOL_GPL(kvm_emulate_cpuid);
+diff --git a/arch/x86/kvm/vmx/vmx.c b/arch/x86/kvm/vmx/vmx.c
+index e7970a2..3d25071 100644
+--- a/arch/x86/kvm/vmx/vmx.c
++++ b/arch/x86/kvm/vmx/vmx.c
+@@ -27,7 +27,7 @@
+ #include <linux/slab.h>
+ #include <linux/tboot.h>
+ #include <linux/trace_events.h>
+-
++#include <stdatomic.h>
+ #include <asm/apic.h>
+ #include <asm/asm.h>
+ #include <asm/cpu.h>
+@@ -63,7 +63,13 @@
+ 
+ MODULE_AUTHOR("Qumranet");
+ MODULE_LICENSE("GPL");
++//modified for cmpe283 assignment2
++extern u32 exit_count;
++extern atomic64_t total_exit_time;
+ 
++//EXPORT_SYMBOL(exit_count);
++//EXPORT_SYMBOL(total_exit_time);
++//done
+ static const struct x86_cpu_id vmx_cpu_id[] = {
+ 	X86_FEATURE_MATCH(X86_FEATURE_VMX),
+ 	{}
+@@ -5860,7 +5866,14 @@ void dump_vmcs(void)
+  */
+ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ {
+-	struct vcpu_vmx *vmx = to_vmx(vcpu);
++       //mode start
++	 u64 start_time = rdtsc();
++         u64 end_time = 0;
++         u32 handle_return_value = 0;
++         exit_count++;
++       //mode end
++       
++        struct vcpu_vmx *vmx = to_vmx(vcpu);
+ 	u32 exit_reason = vmx->exit_reason;
+ 	u32 vectoring_info = vmx->idt_vectoring_info;
+ 
+@@ -5878,17 +5891,30 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ 
+ 	/* If guest state is invalid, start emulating */
+ 	if (vmx->emulation_required)
+-		return handle_invalid_guest_state(vcpu);
++	{
++                end_time = rdtsc();
++               atomic64_add((end_time - start_time),&total_exit_time);
+ 
++		return handle_invalid_guest_state(vcpu);
++                 }
+ 	if (is_guest_mode(vcpu) && nested_vmx_exit_reflected(vcpu, exit_reason))
+-		return nested_vmx_reflect_vmexit(vcpu, exit_reason);
+-
++	{	
++              end_time = rdtsc();
++            // atomic64_add((end_time - start_time),&total_exit_time);
++              atomic64_add((end_time - start_time),&total_exit_time);
++
++              
++	return nested_vmx_reflect_vmexit(vcpu, exit_reason);
++         }
+ 	if (exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY) {
+ 		dump_vmcs();
+ 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
+ 		vcpu->run->fail_entry.hardware_entry_failure_reason
+ 			= exit_reason;
+-		return 0;
++        end_time = rdtsc();
++        //atomic64_add((end_time - start_time),&total_exit_time);
++        atomic64_add((end_time - start_time),&total_exit_time);
++     	return 0;
+ 	}
+ 
+ 	if (unlikely(vmx->fail)) {
+@@ -5896,7 +5922,10 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ 		vcpu->run->exit_reason = KVM_EXIT_FAIL_ENTRY;
+ 		vcpu->run->fail_entry.hardware_entry_failure_reason
+ 			= vmcs_read32(VM_INSTRUCTION_ERROR);
+-		return 0;
++	end_time = rdtsc();
++       // atomic64_add((end_time - start_time),&total_exit_time);
++      atomic64_add((end_time - start_time),&total_exit_time);
++          return 0;
+ 	}
+ 
+ 	/*
+@@ -5922,7 +5951,12 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ 			vcpu->run->internal.data[3] =
+ 				vmcs_read64(GUEST_PHYSICAL_ADDRESS);
+ 		}
+-		return 0;
++	       
++               end_time = rdtsc();
++             //  atomic64_add((end_time - start_time),&total_exit_time);	
++                atomic64_add((end_time - start_time),&total_exit_time);
++              
++ return 0;
+ 	}
+ 
+ 	if (unlikely(!enable_vnmi &&
+@@ -5946,7 +5980,17 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ 
+ 	if (exit_reason < kvm_vmx_max_exit_handlers
+ 	    && kvm_vmx_exit_handlers[exit_reason])
+-		return kvm_vmx_exit_handlers[exit_reason](vcpu);
++{
++                handle_return_value =  kvm_vmx_exit_handlers[exit_reason](vcpu);
++                   end_time = rdtsc();
++                   //atomic64_add((end_time - start_time),&total_exit_time);
++                  atomic64_add((end_time - start_time),&total_exit_time);
++
++
++
++		//return kvm_vmx_exit_handlers[exit_reason](vcpu);
++              return handle_return_value;
++}
+ 	else {
+ 		vcpu_unimpl(vcpu, "vmx: unexpected exit reason 0x%x\n",
+ 				exit_reason);
+@@ -5956,6 +6000,11 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
+ 			KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON;
+ 		vcpu->run->internal.ndata = 1;
+ 		vcpu->run->internal.data[0] = exit_reason;
++		
++                end_time = rdtsc();
++               // atomic64_add((end_time - start_time),&total_exit_time);
++               atomic64_add((end_time - start_time),&total_exit_time);
++
+ 		return 0;
+ 	}
+ }
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 661e2bf..76b671c 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -7400,6 +7400,9 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
+ 		kvm_sched_yield(vcpu->kvm, a0);
+ 		ret = 0;
+ 		break;
++	case 0x283:
++		ret=0x0033383245504D43;
++		break;
+ 	default:
+ 		ret = -KVM_ENOSYS;
+ 		break;
