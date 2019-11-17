@@ -14,7 +14,7 @@
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
 #include <linux/sched/stat.h>
-
+#include <stdatomic.h>
 #include <asm/processor.h>
 #include <asm/user.h>
 #include <asm/fpu/xstate.h>
@@ -23,7 +23,11 @@
 #include "mmu.h"
 #include "trace.h"
 #include "pmu.h"
+u32 exit_count=0;
+EXPORT_SYMBOL(exit_count);
 
+ atomic64_t total_exit_time;
+EXPORT_SYMBOL(total_exit_time);
 static u32 xstate_required_size(u64 xstate_bv, bool compacted)
 {
 	int feature_bit = 0;
@@ -1045,12 +1049,42 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
 		return 1;
 
 	eax = kvm_rax_read(vcpu);
-	ecx = kvm_rcx_read(vcpu);
-	kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);
-	kvm_rax_write(vcpu, eax);
+	//ecx = kvm_rcx_read(vcpu);
+	
+        if(eax==0x4FFFFFFF){
+        eax = exit_count;
+        printk(KERN_INFO "no of total exits:%u",exit_count);
+        kvm_rax_write(vcpu, eax);
+        kvm_rbx_write(vcpu, ebx);
+        kvm_rcx_write(vcpu, ecx);
+        kvm_rdx_write(vcpu, edx);
+
+         }else if(eax==0x4FFFFFFE){
+         
+         eax=0x00; 
+       		//ebx =(u32)((atomic_read(&total_exit_time) & 0xFFFFFFFF00000000LL)>>32);
+        	// ecx =(u32) (atomic_read(&total_exit_time) & 0xFFFFFFFFLL);
+    
+    	 u64 val=(atomic64_read(&total_exit_time) >>32);
+     	 ebx=val & 0xffffffff;
+         ecx=atomic64_read(&total_exit_time) & 0xffffffff;
+         edx=0x00;		      
+         printk(KERN_INFO "total cycles: %llu",atomic64_read(&total_exit_time));
+         kvm_rax_write(vcpu, eax);
+         kvm_rbx_write(vcpu, ebx);
+         kvm_rcx_write(vcpu, ecx);
+         kvm_rdx_write(vcpu, edx);
+
+          }else{
+       
+ 	eax = kvm_rax_read(vcpu);
+        ecx = kvm_rcx_read(vcpu);
+        kvm_cpuid(vcpu, &eax, &ebx, &ecx, &edx, true);     
+        kvm_rax_write(vcpu, eax);
 	kvm_rbx_write(vcpu, ebx);
 	kvm_rcx_write(vcpu, ecx);
 	kvm_rdx_write(vcpu, edx);
+         }
 	return kvm_skip_emulated_instruction(vcpu);
 }
 EXPORT_SYMBOL_GPL(kvm_emulate_cpuid);
