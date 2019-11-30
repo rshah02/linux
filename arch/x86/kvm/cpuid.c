@@ -1041,15 +1041,25 @@ bool kvm_cpuid(struct kvm_vcpu *vcpu, u32 *eax, u32 *ebx,
 }
 EXPORT_SYMBOL_GPL(kvm_cpuid);
 
+// changes for assignment3
+	u32 custom_exit_count[2][69] ={
+            {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68},
+{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+EXPORT_SYMBOL(custom_exit_count);	
+ atomic64_t custom_exit_time[2][69] ={{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68},
+{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+EXPORT_SYMBOL(custom_exit_time);
+
 int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
 {
 	u32 eax, ebx, ecx, edx;
+	
 
 	if (cpuid_fault_enabled(vcpu) && !kvm_require_cpl(vcpu, 0))
 		return 1;
 
 	eax = kvm_rax_read(vcpu);
-	//ecx = kvm_rcx_read(vcpu);
+	ecx = kvm_rcx_read(vcpu);
 	
         if(eax==0x4FFFFFFF){
         eax = exit_count;
@@ -1075,7 +1085,53 @@ int kvm_emulate_cpuid(struct kvm_vcpu *vcpu)
          kvm_rcx_write(vcpu, ecx);
          kvm_rdx_write(vcpu, edx);
 
-          }else{
+          }
+	else if(eax==0x4FFFFFFD){
+		if(ecx <69){  
+			u32 exit_Reason = ecx;
+			eax = custom_exit_count[1][ecx];
+			ebx = 0x00000000;
+			ecx = 0x00000000;
+			edx = 0x00000000;
+			printk(KERN_INFO "Total number of exits for %u is %u",exit_Reason,eax);
+		}else {
+			eax = 0x00000000;
+			ebx = 0x00000000;
+			ecx = 0x00000000;
+			edx = 0xFFFFFFFF;
+			printk(KERN_INFO "Invalid Entry");
+			}
+	 
+	 kvm_rax_write(vcpu, eax);
+         kvm_rbx_write(vcpu, ebx);
+         kvm_rcx_write(vcpu, ecx);
+         kvm_rdx_write(vcpu, edx);
+	}else if(eax==0x4FFFFFFC){
+			if(ecx <69){  
+				u32 exit_Reason = ecx;
+			
+			 	u64 val=(atomic64_read(&custom_exit_time[1][ecx]) >>32);
+     			 	ebx=val & 0xffffffff;
+      			 	ecx=atomic64_read(&custom_exit_time[1][ecx]) & 0xffffffff;
+    			 	eax = 0x00000000;
+			 	edx = 0x00000000;
+				printk(KERN_INFO "Total number of exits for %u is %u",exit_Reason,custom_exit_count[1][exit_Reason]);
+				printk(KERN_INFO "Total time for the exit %u is %llu",exit_Reason,atomic64_read(&custom_exit_time[1][exit_Reason]));
+			}else {
+				eax = 0x00000000;
+				ebx = 0x00000000;
+				ecx = 0x00000000;
+				edx = 0xFFFFFFFF;
+				printk(KERN_INFO "Invalid Entry");
+			}
+
+ 			kvm_rax_write(vcpu, eax);
+     			kvm_rbx_write(vcpu, ebx);
+        		kvm_rcx_write(vcpu, ecx);
+         		kvm_rdx_write(vcpu, edx);
+			}
+	
+	else{
        
  	eax = kvm_rax_read(vcpu);
         ecx = kvm_rcx_read(vcpu);
